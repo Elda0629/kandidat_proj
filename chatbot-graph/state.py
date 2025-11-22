@@ -56,8 +56,7 @@ class State(BaseModel):
     # ... Fylls i om invasive_type == NON_INVASIVE
 
     # Rule 1:
-    # ... All non-invasive devices are classified as class I, unless one of the rules in rule 2 to rule 4 applies.
-    # ...(Inga extra frågor behövs för Regel 1)
+    # ... All non-invasive devices are classified as class I, unless one of the rules in rule 2 to rule 4 applies ....(Inga extra frågor behövs för Regel 1)
 
     # Rule 2: Channeling/Storing (Förenklad enligt din instruktion)
     r2_channeling_storing: Optional[bool] = None      # "Gatekeeper" för Regel 2
@@ -82,7 +81,7 @@ class State(BaseModel):
     ######## --- 5. INVASIVE SPECIFICS (Rules 5-8) --- ########
     # Fylls i om invasive_type != NON_INVASIVE
 
-    # ...COMMON FIELDS (Shared by Rules 5, 6, 7, 8)
+    # ... COMMON FIELDS (Shared by Rules 5, 6, 7, 8)
     central_circulatory_system: Optional[bool] = None  # Rule 6, 7, 8: "intended specifically for use in direct contact with the heart or central circulatory system -> Class III"
     central_nervous_system: Optional[bool] = None  # Rule 6, 7, 8: "...or the central nervous system -> Class III"
     teeth_placement: Optional[bool] = None  # Rule 5, 7, 8: Undantag. Ofta Class IIa (Dental) istället för IIb/III.
@@ -105,8 +104,7 @@ class State(BaseModel):
     r6_medicinal_delivery_hazardous: Optional[bool] = None  # Specifik nyans för Rule 6: Är administreringen POTENTIELLT FARLIG?  (Om 'administers_medicines' är True, kollar vi detta för Rule 6).
 
     # Rule 7 (Surgically Invasive & Short Term)
-    # ... (Mest täckt av Common fields, men här kan finnas unika variabler om nödvändigt)
-    # ... Just nu täcks allt av Common + Duration.
+    # ... (Mest täckt av Common fields, men här kan finnas unika variabler om nödvändigt) ... Just nu täcks allt av Common + Duration.
 
     # Rule 8 (Surgically Invasive & Long Term / Implantable) ---
     # ...Gäller om invasive_type == IMPLANTABLE eller Duration == LONG_TERM
@@ -115,10 +113,10 @@ class State(BaseModel):
     r8_breast_implant_or_mesh: Optional[bool] = None  # "breast implants or surgical meshes -> Class III"
     r8_active_implantable: Optional[bool] = None  # "active implantable devices -> Class III"
 
-######## --- 6. ACTIVE SPECIFICS (Rules 9-12) --- ########
+    ######## --- 6. ACTIVE SPECIFICS (Rules 9-12) --- ########
     # Fylls i om is_active_device == True
 
-    # --- COMMON FIELDS (Shared by Rules 9 & 10) ---
+    # COMMON FIELDS (Shared by Rules 9 & 10) ---
     
     emits_ionizing_radiation: Optional[bool] = None # Rule 9 & 10: "intended to emit ionizing radiation..." -> Class IIb (Both Therapeutic and Diagnostic) .... (T.ex. Röntgen, CT, strålkanoner. Notera: Gäller ej synligt ljus).
 
@@ -133,9 +131,9 @@ class State(BaseModel):
     # Rule 10: Active Diagnostic Devices
     #... Gäller enheter för diagnos och övervakning.
     
-    r10_monitors_vital_processes: Optional[bool] = None # "allow direct diagnosis or monitoring of vital physiological processes -> Class IIa"
-    r10_immediate_danger_alert: Optional[bool] = None # Exception: "...variations... could result in immediate danger to the patient -> Class IIb" ... (T.ex. larm på en intensivvårdsmonitor).
-    r10_illuminates_body: Optional[bool] = None # "intended to illuminate the patient's body, in the visible spectrum -> Class I" ... (T.ex. undersökningslampor, pannlampor).
+    r10_monitors_vital_processes: Optional[bool] = None  # "allow direct diagnosis or monitoring of vital physiological processes -> Class IIa"
+    r10_immediate_danger_alert: Optional[bool] = None  # Exception: "...variations... could result in immediate danger to the patient -> Class IIb" ... (T.ex. larm på en intensivvårdsmonitor).
+    r10_illuminates_body: Optional[bool] = None  # "intended to illuminate the patient's body, in the visible spectrum -> Class I" ... (T.ex. undersökningslampor, pannlampor).
 
     # Rule 11: Software (Decision Making)
     #... Gäller fristående mjukvara eller mjukvara som driver en enhet.
@@ -147,23 +145,39 @@ class State(BaseModel):
     
     r12_active_drug_delivery: Optional[bool] = None # "administer and/or remove medicinal products... -> Class IIa"
     r12_active_drug_delivery_hazardous: Optional[bool] = None # Exception: "...in a manner that is potentially hazardous -> Class IIb" ... (T.ex. insulinpumpar, infusionspumpar för smärtlindring).
+    
+    # Rule 13: All Other Active Devices is Class I
+    # ... If is_active_device == True,  but all previous fields (r9-r12) are False/None, then Class I by default.
+
 
     ######## --- 7. SPECIAL RULES (Rules 14-22) --- ########
-    # Dessa "checkas" alltid i slutet då de gäller oavsett typ
+    # ... Dessa "checkas" alltid i slutet då de gäller oavsett typ.
+
+    # --- Rule 14: Medicinal Products ---
+    # ... Gäller produkter som innehåller läkemedel som en integrerad del.
+
+    r14_contains_medicinal_product: Optional[bool] = None # "incorporating... a medicinal product... ancillary action -> Class III" ... (Gäller även derivat från humant blod/plasma. Om läkemedlet är huvudsyftet regleras det inte av MDR utan av läkemedelsdirektivet).
+
+    # --- Rule 15: Contraception & STD Prevention ---
     
-    contains_medicinal_product: Optional[bool] = None # Rule 14 (Device + Drug combo)
-    contraception_std_prevention: Optional[bool] = None # Rule 15
-    disinfecting_properties: Optional[bool] = None    # Rule 16
-    recording_xray: Optional[bool] = None             # Rule 17
-    animal_human_tissue: Optional[bool] = None        # Rule 18
+    r15_contraception_std_prevention: Optional[bool] = None # "contraception or prevention of transmission of STDs -> Class IIb" ... (Notera: Om enheten OCKSÅ är Implantable eller Long Term Invasive (via globala fält) -> Class III).
+
+    # --- Rule 16: Disinfection & Sterilization ---
+    # ... Gäller produkter som rengör eller desinficerar *andra* produkter.
+
+    r16_contact_lens_care: Optional[bool] = None # "disinfecting, cleaning, rinsing... contact lenses -> Class IIb" ... (Specifikt för kontaktlinser. Gäller även vätskor för förvaring/hydrering).
+    r16_disinfects_medical_devices: Optional[bool] = None # "disinfecting or sterilising medical devices -> Class IIa"... (Gäller t.ex. autoklaver, sterilisatorer).
+
+    r16_disinfects_invasive_endpoint: Optional[bool] = None # Exception: "...disinfecting invasive devices, as the end point of processing -> Class IIb" ... (Gäller desinfektionslösningar eller diskdesinfektorer avsedda specifikt för invasiva instrument). ... (OBS: Regel 16 gäller INTE om rengöring sker enbart med fysisk verkan, t.ex. en borste).
     
     # Rule 19 (Nano)
-    nanomaterial: Optional[bool] = None
-    nanomaterial_exposure: Optional[NanoExposure] = None # Endast om nanomaterial = True
+    r19_nanomaterial: Optional[bool] = None
+    r19_nanomaterial_exposure: Optional[NanoExposure] = None # Endast om nanomaterial = True
     
-    inhalation_drug_delivery: Optional[bool] = None   # Rule 20
-    substance_absorbed_locally: Optional[bool] = None # Rule 21 (Substances introduced to body)
-    closed_loop_system: Optional[bool] = None         # Rule 22 (Artificial Pancreas etc.)
+    r20_inhalation_drug_delivery: Optional[bool] = None  # Rule 20
+    r20_impact_on_drug_or_treat_life_threatening: Optional[bool] = None  # Rule 20 unless their mode of action has an essential impact on the efficacy and safety of the administered medicinal product or they are intended to treat life- threatening conditions, in which case they are classified as class IIb.
+    r21_substance_absorbed_locally: Optional[bool] = None  # Rule 21 (Substances introduced to body)
+    r22_closed_loop_system: Optional[bool] = None  # Rule 22 (Artificial Pancreas etc.)
 
     # --- 8. OUTPUT ---
     potential_classes: List[str] = Field(default_factory=list) # Lista med träffar, t.ex. ["Rule 1: Class I", "Rule 10: Class IIa"]
