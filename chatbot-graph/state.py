@@ -1,0 +1,182 @@
+from typing import Annotated, List, Literal, Optional
+from pydantic import BaseModel, Field
+import operator
+
+# (Samma Enums som tidigare: DeviceClass, Duration, InvasiveType, etc.)
+from enum import Enum
+from typing import List, Optional
+from pydantic import BaseModel, Field
+
+class DeviceClass(str, Enum):
+    CLASS_I = "Class I"
+    CLASS_IIa = "Class IIa"
+    CLASS_IIb = "Class IIb"
+    CLASS_III = "Class III"
+
+class Duration(str, Enum):
+    TRANSIENT = "Transient (<60 min)"
+    SHORT_TERM = "Short term (<30 days)"
+    LONG_TERM = "Long term (>30 days)"
+
+class InvasiveType(str, Enum):
+    NON_INVASIVE = "Non-invasive"
+    BODY_ORIFICE = "Invasive via body orifice"
+    SURGICALLY_INVASIVE = "Surgically invasive"
+    IMPLANTABLE = "Implantable"
+
+class NanoExposure(str, Enum):
+    NEGLIGIBLE = "Negligible"
+    LOW = "Low"
+    MEDIUM = "Medium"
+    HIGH = "High"
+
+from typing import Annotated, List, Optional, Literal
+from pydantic import BaseModel, Field
+import operator
+
+from typing import Annotated, List, Optional
+from pydantic import BaseModel, Field
+import operator
+
+class State(BaseModel):
+    ####### --- CHAT CONTEXT ---  #######
+    # Lagrar historiken så LLM:en minns vad som sagts
+    messages: Annotated[List[str], operator.add] = Field(default_factory=list)
+
+    ####### --- TRIAGE (Vägval) --- #######
+    # Dessa två avgör hela flödet i grafen
+    is_active_device: Optional[bool] = None       # True = Gå till Active Questions
+    invasive_type: Optional[InvasiveType] = None  # Bestämmer Non-invasive vs Invasive Questions
+
+    ####### --- COMMON FIELDS --- #######
+    # Duration krävs för nästan alla invasiva regler (5-8)
+    duration: Optional[Duration] = None
+
+    ####### --- NON-INVASIVE SPECIFICS (Rules 1-4) --- ####### 
+    # Fylls i om invasive_type == NON_INVASIVE
+
+    # Rule 1:
+    # ... All non-invasive devices are classified as class I, unless one of the rules in rule 2 to rule 4 applies.
+    # ...(Inga extra frågor behövs för Regel 1)
+
+    # Rule 2: Channeling/Storing (Förenklad enligt din instruktion)
+    r2_channeling_storing: Optional[bool] = None      # "Gatekeeper" för Regel 2
+    r2_is_blood_bag: Optional[bool] = None            # Enda separata gruppen för IIb
+    r2_includes_blood_body_liquids: Optional[bool] = None # Inkluderar organ/vävnad/blod -> IIa
+    r2_connected_active: Optional[bool] = None        # Kopplas till aktiv enhet -> IIa
+
+    # Rule 3: Modifying composition
+    r3_modifies_composition: Optional[bool] = None # All non-invasive devices intended for modifying the biological or chemical composition of human tissues or cells, blood, other body liquids or other liquids intended for implantation or administration into the body are classified as class IIb
+    r3_filtration_centrifugation: Optional[bool] = None # unless the treatment for which the device is used consists of filtration, centrifugation or exchanges of gas, heat, in which case they are classified as class IIa.
+    r3_in_vitro_cells: Optional[bool] = None          # All non-invasive devices consisting of a substance or a mixture of substances intended to be used in vitro in direct contact with human cells, tissues or organs taken from the human body or used in vitro with human embryos before their implantation or administration into the body are classified as class III.
+
+    # Rule 4: Injured Skin & Mucous Membrane
+    
+    # ... If this is false, skip all Rule 4 questions   
+    r4_contact_injured_skin_mucosa_check: Optional[bool] = None  # "All non-invasive devices which come into contact with injured skin or mucous membrane..."
+
+    r4_mechanical_barrier_compression_absorption: Optional[bool] = None # " class I if they are intended to be used as a mechanical barrier, for compression or for absorption of exudates;"
+
+    r4_breached_dermis_secondary_healing: Optional[bool] = None # "class IIb if they are intended to be used principally for injuries to skin which have breached the dermis or mucous membrane and can only heal by secondary intent;"
+
+    r4_manages_micro_environment: Optional[bool] = None # "class IIa if they are principally intended to manage the micro-environment of injured skin or mucous membrane;"
+
+######## --- INVASIVE SPECIFICS (Rules 5-8) --- ########
+    # Fylls i om invasive_type != NON_INVASIVE
+
+    # --- Rule 5: Body Orifice (Not Surgically Invasive) ---
+    # Gäller om invasive_type == InvasiveType.BODY_ORIFICE
+    
+    r5_connected_to_active_class_IIa_or_higher: Optional[bool] = None 
+    # "intended for connection to a class IIa, class IIb or class III active device -> Class IIa"
+    
+    r5_oral_nasal_ear_specific: Optional[bool] = None 
+    # Exception: "...used in the oral cavity... ear canal... nasal cavity -> Class I (if transient)"
+    
+    r5_absorbed_by_mucous_membrane: Optional[bool] = None 
+    # Exception: "...and are not liable to be absorbed by the mucous membrane" (Replaces IIb with IIa for Long Term)
+
+    # --- Rule 6: Surgically Invasive & Transient (<60 min) ---
+    # Gäller om invasive_type == SURGICALLY_INVASIVE och duration == TRANSIENT
+    
+    r6_reusable_surgical_instrument: Optional[bool] = None
+    # "...are reusable surgical instruments, in which case they are classified as class I"
+    # (T.ex. skalpeller, sågar, borrar som rengörs och återanvänds)
+
+    r6_supplies_ionizing_radiation: Optional[bool] = None
+    # "...intended to supply energy in the form of ionising radiation -> Class IIb"
+    # (Notera: Skiljer sig från Rule 9/10 då detta gäller själva 'proben' som är inne i kroppen)
+
+    r6_biological_effect_or_absorbed: Optional[bool] = None
+    # "...have a biological effect or are wholly or mainly absorbed -> Class IIb"
+    
+    r6_medicinal_delivery_hazardous: Optional[bool] = None
+    # "...administer medicinal products ... in a manner that is potentially hazardous -> Class IIb"
+
+    # --- COMMON ANATOMY & PROPERTIES (Rules 6, 7, 8) ---
+    # Dessa fält används av Rule 6 (Transient), Rule 7 (Short-term) och Rule 8 (Long-term/Implant)
+    # Om någon av dessa är True triggar det oftast Class III.
+
+    central_circulatory_system: Optional[bool] = None 
+    # Rule 6, 7, 8: "intended specifically for use in direct contact with the heart or central circulatory system -> Class III"
+
+    central_nervous_system: Optional[bool] = None     
+    # Rule 6, 7, 8: "...or the central nervous system -> Class III"
+
+    # --- Rule 7 Specifics (Short Term) ---
+    # Rule 7 använder mest "Common"-fälten ovan + kemisk förändring
+    r7_chemical_change: Optional[bool] = None
+    # "intended to undergo chemical change in the body -> Class IIb (unless placed in teeth)"
+
+    # --- Rule 8 Specifics (Long Term / Implantable) ---
+    # Rule 8 använder "Common"-fälten ovan + specifika implantattyper
+    
+    r8_orthopaedic_implant_type: Optional[str] = None
+    # "total or partial joint replacements -> Class III", "spinal disc -> Class III"
+    # "ancillary components such as screws, wedges, plates -> Class IIb"
+    
+    r8_breast_implant_or_mesh: Optional[bool] = None
+    # "breast implants or surgical meshes -> Class III"
+    
+    r8_active_implantable: Optional[bool] = None
+    # "active implantable devices -> Class III"
+    
+    # Rule 11 (Software)
+    software_decision_impact: Optional[str] = None    # "Death", "Serious deterioration" eller "None"
+    
+    # Rule 12 (Active Medicine Admin)
+    active_drug_delivery: Optional[bool] = None
+
+    ######## --- 7. SPECIAL RULES (Rules 14-22) --- ########
+    # Dessa "checkas" alltid i slutet då de gäller oavsett typ
+    
+    contains_medicinal_product: Optional[bool] = None # Rule 14 (Device + Drug combo)
+    contraception_std_prevention: Optional[bool] = None # Rule 15
+    disinfecting_properties: Optional[bool] = None    # Rule 16
+    recording_xray: Optional[bool] = None             # Rule 17
+    animal_human_tissue: Optional[bool] = None        # Rule 18
+    
+    # Rule 19 (Nano)
+    nanomaterial: Optional[bool] = None
+    nanomaterial_exposure: Optional[NanoExposure] = None # Endast om nanomaterial = True
+    
+    inhalation_drug_delivery: Optional[bool] = None   # Rule 20
+    substance_absorbed_locally: Optional[bool] = None # Rule 21 (Substances introduced to body)
+    closed_loop_system: Optional[bool] = None         # Rule 22 (Artificial Pancreas etc.)
+
+    # --- 8. OUTPUT ---
+    potential_classes: List[str] = Field(default_factory=list) # Lista med träffar, t.ex. ["Rule 1: Class I", "Rule 10: Class IIa"]
+    final_classification: Optional[str] = None        # Resultatet, t.ex. "Class IIa"
+    rationale: Optional[str] = None                   # Förklaringen
+
+def get_field_options(field_name: str) -> List[str]: 
+    """Helper function to get the Literal options for a field."""
+    field_type = State.__annotations__.get(field_name)
+    if field_type:
+        # This will extract options from Optional[Literal[...]]
+        args = get_args(field_type)
+        if args:
+            literal_args = get_args(args[0])
+            if literal_args:
+                return list(literal_args)
+    return []

@@ -8,7 +8,7 @@ run:
 	python3 checklist_chatbot.py
 
 graph:
-	python3 chatbot-graph.py
+	python3 chatbot-graph/chatbot-graph.py
 
 fuzzy:
 	python3 fuzzy_search.py

@@ -19,8 +19,6 @@ All non-invasive devices consisting of a substance or a mixture of substances in
 All non-invasive devices which come into contact with injured skin or mucous membrane are classified as:
 — class I if they are intended to be used as a mechanical barrier, for compression or for absorption of exudates;
 — class IIb if they are intended to be used principally for injuries to skin which have breached the dermis or mucous membrane and can only heal by secondary intent;
-L 117/142 EN Official Journal of the European Union 5.5.2017
- 5. 5.1.
 — class IIa if they are principally intended to manage the micro-environment of injured skin or mucous membrane; and
 — class IIa in all other cases.
 This rule applies also to the invasive devices that come into contact with injured mucous membrane.
