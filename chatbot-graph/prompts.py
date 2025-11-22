@@ -1,5 +1,3 @@
-# prompts.py
-
 def build_triage_prompt(field_name, options, user_message):
     """Generates the prompt for asking/parsing a single triage field."""
     
