@@ -1,5 +1,5 @@
-# app.py
 import os
+import time
 from pydantic import BaseModel
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage
@@ -11,7 +11,7 @@ from tools import TriageNode, InvasiveNode, ActiveNode, SoftwareNode
 
 # --- LLM ---
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
+    model="gemini-2.0-flash-lite",
     google_api_key=os.environ.get("GEMINI_API_KEY"),
     temperature=0 
 )
@@ -21,110 +21,132 @@ llm = ChatGoogleGenerativeAI(
 # ============================================================
 
 def run_node(state: State, tool_class: type[BaseModel], node_name: str, is_triage: bool = False) -> dict:
-    """Generic engine: Intent Check → (Clarify OR Extract) → Find Missing → Ask."""
+    """
+    Robust engine: 
+    1. Checks if input is fresh (User) or stale (AI transition).
+    2. Checks Intent (Answer vs Clarification).
+    3. Extracts Data.
+    4. Finds missing fields & Asks single questions.
+    """
     print(f"\n[DEBUG] Running Node: {node_name.upper()}") 
+    
+    # --- EARLY EXIT: Skip triage if already complete ---
+    # This prevents triage from "consuming" user input meant for other nodes
+    if is_triage and state.triage_complete:
+        print(f"[DEBUG] Triage already complete, passing through to router...")
+        return {}  # Return empty - don't process input, let router handle it
+    
+    # --- PAUSE TO PREVENT 429 ERRORS (FREE TIER) ---
+    time.sleep(1.0) 
     
     messages = state.messages
     updates = {}
     
+    # --- 1. DETERMINE IF WE SHOULD PROCESS INPUT ---
+    # We only analyze input if the LAST message was from a Human.
+    # If the last message was from AI (e.g., "Triage complete"), we skip extraction
+    # and go straight to finding the next missing field.
+    
     user_input = ""
     last_ai_msg = "None"
+    should_process_input = False
 
-    # --- SETUP CONTEXT ---
-    if messages and isinstance(messages[-1], HumanMessage):
-        user_input = messages[-1].content
-        if len(messages) > 1 and isinstance(messages[-2], AIMessage):
-            last_ai_msg = messages[-2].content
+    if messages:
+        last_message = messages[-1]
+        
+        if isinstance(last_message, HumanMessage):
+            user_input = last_message.content
+            should_process_input = True
+            
+            # Get context (the question the user answered)
+            if len(messages) > 1 and isinstance(messages[-2], AIMessage):
+                last_ai_msg = messages[-2].content
 
-    # ============================================================
-    # STEP 1: CHECK INTENT (CLARIFICATION VS ANSWER)
-    # ============================================================
-    
+    if should_process_input:
+        print(f"[DEBUG] Processing user input: '{user_input}'")
+    else:
+        print(f"[DEBUG] No new user input (Node transition). Skipping extraction.")
+
+
+    # --- 2. INTENT CHECK (Only if input is fresh) ---
     is_clarification = False
     
-    if user_input:
-        print(f"[DEBUG] Checking intent for input: '{user_input}'...")
-        
-        # We tell the model to be very strict with classification
+    if should_process_input and user_input:
         intent_prompt = f"""
         Analyze the conversation.
-        
         Bot asked: "{last_ai_msg}"
         User replied: "{user_input}"
         
-        Task: Determine if the User is answering the question OR asking for help/clarification.
+        Task: Determine if the User is answering the question OR asking for clarification.
         
         Return ONLY one word:
-        - "ANSWER" (if user provides info, says yes/no, or ignores the question)
-        - "CLARIFICATION" (if user asks "what do you mean?", "I don't understand", "define X")
+        - "ANSWER" (if user answers or ignores the question)
+        - "CLARIFICATION" (if user asks "what do you mean?", "define X", "I don't understand")
         """
         
-        intent_result = llm.invoke(intent_prompt).content.strip().upper()
-        print(f"[DEBUG] Intent detected: {intent_result}")
-        
-        if "CLARIFICATION" in intent_result:
-            is_clarification = True
+        try:
+            intent_result = llm.invoke(intent_prompt).content.strip().upper()
+            print(f"[DEBUG] Intent detected: {intent_result}")
+            if "CLARIFICATION" in intent_result:
+                is_clarification = True
+        except Exception as e:
+            print(f"[Intent Error]: {e}")
 
-    # ============================================================
-    # STEP 2: HANDLE CLARIFICATION (IF NEEDED)
-    # ============================================================
-    
+
+    # --- 3. HANDLE CLARIFICATION (If needed) ---
     if is_clarification:
         print("[DEBUG] Handling clarification request...")
+        time.sleep(1.0) # Safety pause
         
         explain_prompt = f"""
         The user did not understand the previous question.
-        
         Previous Question: "{last_ai_msg}"
         User's Question: "{user_input}"
         
         Task:
-        1. Explain the medical device concept clearly and simply.
-        2. Re-state the original question in a friendlier way.
+        1. Explain the concept clearly and simply.
+        2. Re-state the original question in a friendly way.
         
-        CRITICAL OUTPUT RULES:
-        - Speak directly to the user.
-        - Do NOT provide a list of options.
-        - Do NOT say "Here is an explanation". Just explain it.
+        CRITICAL: Do not give a list of options. Just explain and ask.
         """
         explanation = llm.invoke(explain_prompt).content
         return {"messages": [AIMessage(content=explanation)]}
 
-    # ============================================================
-    # STEP 3: EXTRACT DATA (ONLY IF NOT CLARIFICATION)
-    # ============================================================
-    
-    current_facts = {k: getattr(state, k, None) for k in tool_class.model_fields}
-    
-    prompt = f"""
-    TASK: Update the medical device data based on the conversation.
-    
-    CONTEXT:
-    1. Current Known Data: {current_facts}
-    2. The Bot just asked: "{last_ai_msg}"
-    3. The User just answered: "{user_input}"
-    
-    INSTRUCTIONS:
-    - Update fields based strictly on the User's answer.
-    - If the user says "No" or "Yes", apply it ONLY to the field relevant to the Bot's last question.
-    """
 
-    try:
-        result = llm.with_structured_output(tool_class).invoke(prompt)
-        extracted_data = result.model_dump(exclude_unset=True, exclude_none=True)
+    # --- 4. EXTRACT DATA (Only if Answer & Input is fresh) ---
+    if should_process_input and not is_clarification:
+        current_facts = {k: getattr(state, k, None) for k in tool_class.model_fields}
         
-        if extracted_data:
-            print(f"[DEBUG] Extracted: {extracted_data}")
-            updates.update(extracted_data)
-        else:
-            print(f"[DEBUG] No data extracted.")
-            
-    except Exception as e:
-        print(f"[Extract Error]: {e}")
+        prompt = f"""
+        TASK: Update the medical device data.
+        
+        CONTEXT:
+        1. Known Data: {current_facts}
+        2. Bot asked: "{last_ai_msg}"
+        3. User answered: "{user_input}"
+        
+        INSTRUCTIONS:
+        - specific: Update fields based strictly on the User's answer.
+        - context: If User says "Yes"/"No", apply it ONLY to the field relevant to the Bot's last question.
+        - strict: Do NOT guess fields unrelated to the answer.
+        """
 
-    # ============================================================
-    # STEP 4: FIND MISSING & ACT
-    # ============================================================
+        try:
+            time.sleep(1.0) # Safety pause before heavy extraction
+            result = llm.with_structured_output(tool_class).invoke(prompt)
+            extracted_data = result.model_dump(exclude_unset=True, exclude_none=True)
+            
+            if extracted_data:
+                print(f"[DEBUG] Extracted: {extracted_data}")
+                updates.update(extracted_data)
+            else:
+                print(f"[DEBUG] No data extracted.")
+        except Exception as e:
+            print(f"[Extract Error]: {e}")
+
+
+    # --- 5. FIND MISSING & ACT (Always runs) ---
+    # We check the updated state to see what is still missing.
     
     missing = None
     temp_state = state.model_copy(update=updates)
@@ -138,25 +160,23 @@ def run_node(state: State, tool_class: type[BaseModel], node_name: str, is_triag
         name, desc = missing
         print(f"[DEBUG] Missing field: {name}")
         
-        # --- FIX IS HERE: STRICT SINGLE OUTPUT ---
+        time.sleep(1.0) # Safety pause before generation
+        
         q_prompt = f"""
         You are a helpful Medical Device Classification Assistant.
-        You need to collect information about this field: '{name}'
-        Field Description: {desc}
+        You need information about: '{name}'
+        Description: {desc}
         
         Task: Ask the user a SINGLE, clear question to get this information.
         
         CRITICAL OUTPUT RULES:
         - Return ONLY the question text.
-        - Do NOT give options (like "Option 1", "Option 2").
-        - Do NOT add meta-text like "Here is a question".
-        - If it is a Yes/No question, keep it simple.
-        - If it is an Enum (multiple choice), list the options naturally in the sentence.
+        - Do NOT give options (A, B, C).
+        - Do NOT use bullet points.
+        - Do NOT add meta-text like "Here is the question".
         """
         q = llm.invoke(q_prompt).content
-        
-        # Cleanup: sometimes LLMs still wrap text in quotes or add newlines
-        q_clean = q.strip().replace('"', '')
+        q_clean = q.strip().replace('"', '') # Clean up quotes
         
         updates["messages"] = [AIMessage(content=q_clean)]
     
@@ -215,15 +235,37 @@ def classify_node(state: State) -> dict:
 # ============================================================
 
 def router(state: State) -> str:
+    """
+    Decides flow:
+    - If AI just asked a question -> STOP (END) to wait for user.
+    - If AI just gave a status update (✓) -> CONTINUE automatically.
+    - Otherwise -> Route to next node logic.
+    """
+    
+    # 1. Check the very last message
     if state.messages and isinstance(state.messages[-1], AIMessage):
         last_msg = state.messages[-1].content
+        
+        # LOGIC: 
+        # If it contains "✓" (Node done) or "📋" (Final Report), we generally want to CONTINUE 
+        # to the next logic step or finish.
+        # BUT if it does NOT contain those, it's a question. We MUST stop.
+        
         if "✓" not in last_msg and "📋" not in last_msg:
+             print("[DEBUG] Router: AI asked a question -> STOP (wait for input).")
              return END
+        else:
+             print(f"[DEBUG] Router: Status update '{last_msg}' -> CONTINUE flow.")
 
+    # 2. Logic Flow
     if not state.triage_complete:
         return "triage"
+    
     if state.pending_nodes:
-        return state.pending_nodes[0]
+        next_node = state.pending_nodes[0]
+        print(f"[DEBUG] Router -> Next pending node: {next_node}")
+        return next_node
+        
     return "classify"
 
 
