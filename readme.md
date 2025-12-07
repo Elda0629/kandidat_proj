@@ -27,6 +27,10 @@ Open mac terminal and type:
 1. ```make activate```
 2. ```make run```
 
+- To get devices, use:
+```make get_devices_info```
+also go into, filter_devices.py, and change the riskklass at the end of the file (line 391)
+
 
 ## Other information
 Good api that we could use for thesis case

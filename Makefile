@@ -2,18 +2,15 @@ PYTHON ?= python3.12
 VENV_DIR ?= .venv
 PIP := $(VENV_DIR)/bin/pip
 
-.PHONY: venv install clean activate run fuzzy graph filter
-	
-run: 
-	python3 checklist_chatbot.py
+.PHONY: venv install clean activate run get_devices_info fuzzy
 
-graph:
+run:
 	python3 chatbot-graph/chatbot-graph.py
 
 fuzzy:
 	python3 fuzzy_search.py
 
-filter:
+get_devices_info:
 	python3 filter_devices.py
 
 venv:
